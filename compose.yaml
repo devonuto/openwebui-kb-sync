@@ -1,0 +1,15 @@
+services:
+  markdown-sync:
+    # This tells Synology to build the image from your local 'app' folder
+    build: 
+      context: ./app
+      dockerfile: Dockerfile
+    image: markdown-sync:latest
+    container_name: markdown-sync
+    network_mode: "host"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/data
+      - /volume2/homes/devonuto/markdown-repos:/volume2/homes/devonuto/markdown-repos
+    restart: "no"
