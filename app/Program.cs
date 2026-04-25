@@ -8,7 +8,10 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
+
+[assembly: InternalsVisibleTo("app.Tests")]
 
 // ==========================================
 // 1. CONFIGURATION LOGIC
@@ -74,6 +77,15 @@ public class MultiRepoKnowledgeSync
         _fileState = LoadState();
 
         _client = new HttpClient { Timeout = RequestTimeout };
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+    }
+
+    internal MultiRepoKnowledgeSync(string baseUrl, string apiKey, string stateFilePath, HttpClient httpClient)
+    {
+        _baseUrl = baseUrl.TrimEnd('/');
+        _stateFilePath = stateFilePath;
+        _fileState = LoadState();
+        _client = httpClient;
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
     }
 
