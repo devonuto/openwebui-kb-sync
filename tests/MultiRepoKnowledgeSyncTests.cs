@@ -16,6 +16,7 @@ public sealed class MultiRepoKnowledgeSyncTests : IDisposable
 {
     private readonly string _tempRoot;
     private readonly string _stateFile;
+    private const string UploadUrl = "http://test/api/v1/files/?process=true&process_in_background=false";
 
     public MultiRepoKnowledgeSyncTests()
     {
@@ -184,7 +185,7 @@ public sealed class MultiRepoKnowledgeSyncTests : IDisposable
             var url = req.RequestUri!.ToString();
             if (req.Method == HttpMethod.Get && url.Contains("/api/v1/knowledge/"))
                 return JsonOk("""[{"id":"kb-1","name":"myrepo"}]""");
-            if (req.Method == HttpMethod.Post && url.EndsWith("/api/v1/files/"))
+            if (req.Method == HttpMethod.Post && url == UploadUrl)
             {
                 int n = Interlocked.Increment(ref uploadCounter);
                 return JsonOk($$"""{"id":"file-{{n:000}}"}""");
@@ -219,7 +220,7 @@ public sealed class MultiRepoKnowledgeSyncTests : IDisposable
             var url = req.RequestUri!.ToString();
             if (req.Method == HttpMethod.Get)
                 return JsonOk("""[{"id":"kb-1","name":"myrepo"}]""");
-            if (req.Method == HttpMethod.Post && url.EndsWith("/api/v1/files/"))
+            if (req.Method == HttpMethod.Post && url == UploadUrl)
                 return JsonOk("""{"id":"file-001"}""");
             if (req.Method == HttpMethod.Post && url.Contains("/file/add"))
                 return JsonOk("{}");
@@ -250,7 +251,7 @@ public sealed class MultiRepoKnowledgeSyncTests : IDisposable
             var url = req.RequestUri!.ToString();
             if (req.Method == HttpMethod.Get)
                 return JsonOk("""[{"id":"kb-1","name":"myrepo"}]""");
-            if (req.Method == HttpMethod.Post && url.EndsWith("/api/v1/files/"))
+            if (req.Method == HttpMethod.Post && url == UploadUrl)
                 return JsonOk("""{"id":"file-001"}""");
             // 400 Bad Request is not retried by ShouldRetry, so the test stays fast.
             if (req.Method == HttpMethod.Post && url.Contains("/file/add"))
@@ -277,7 +278,7 @@ public sealed class MultiRepoKnowledgeSyncTests : IDisposable
             var url = req.RequestUri!.ToString();
             if (req.Method == HttpMethod.Get && url.Contains("/api/v1/knowledge/"))
                 return JsonOk("""[{"id":"kb-1","name":"myrepo"}]""");
-            if (req.Method == HttpMethod.Post && url.EndsWith("/api/v1/files/"))
+            if (req.Method == HttpMethod.Post && url == UploadUrl)
                 return JsonOk("""{"id":"file-001"}""");
             if (req.Method == HttpMethod.Post && url.Contains("/file/add"))
                 return JsonOk("{}");
@@ -335,7 +336,7 @@ public sealed class MultiRepoKnowledgeSyncTests : IDisposable
             if (req.Method == HttpMethod.Get && url.Contains("/api/v1/knowledge/"))
                 return JsonOk("""[{"id":"kb-1","name":"myrepo"}]""");
 
-            if (req.Method == HttpMethod.Post && url.EndsWith("/api/v1/files/"))
+            if (req.Method == HttpMethod.Post && url == UploadUrl)
             {
                 uploadAttempts++;
                 if (uploadAttempts == 1)
@@ -358,8 +359,33 @@ public sealed class MultiRepoKnowledgeSyncTests : IDisposable
         await sync.SyncAllRepositoriesAsync(reposRoot);
 
         Assert.Equal(2, uploadAttempts);
-        Assert.Contains(fake.RequestLog, r => r.Method == "POST" && r.Url.EndsWith("/api/v1/files/"));
+        Assert.Contains(fake.RequestLog, r => r.Method == "POST" && r.Url == UploadUrl);
         Assert.True(File.Exists(_stateFile), "State file should be written after retry succeeds.");
+    }
+
+    [Fact]
+    public async Task SyncDirectory_UploadUsesSynchronousProcessingUrl()
+    {
+        var reposRoot = Path.Combine(_tempRoot, "repos");
+        var repoDir = Path.Combine(reposRoot, "myrepo");
+        Directory.CreateDirectory(repoDir);
+        File.WriteAllText(Path.Combine(repoDir, "doc.md"), "# Doc");
+
+        var sync = CreateSync(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (req.Method == HttpMethod.Get && url.Contains("/api/v1/knowledge/"))
+                return JsonOk("""[{"id":"kb-1","name":"myrepo"}]""");
+            if (req.Method == HttpMethod.Post && url == UploadUrl)
+                return JsonOk("""{"id":"file-001"}""");
+            if (req.Method == HttpMethod.Post && url.Contains("/file/add"))
+                return JsonOk("{}");
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        }, out var fake);
+
+        await sync.SyncAllRepositoriesAsync(reposRoot);
+
+        Assert.Contains(fake.RequestLog, r => r.Method == "POST" && r.Url == UploadUrl);
     }
 
     // -------------------------------------------------------------------------
@@ -384,7 +410,7 @@ public sealed class MultiRepoKnowledgeSyncTests : IDisposable
             if (req.Method == HttpMethod.Post && url.Contains("/api/v1/knowledge/create"))
                 return JsonOk("""{"id":"new-kb"}""");
             // File upload.
-            if (req.Method == HttpMethod.Post && url.EndsWith("/api/v1/files/"))
+            if (req.Method == HttpMethod.Post && url == UploadUrl)
                 return JsonOk("""{"id":"file-001"}""");
             // Single-file attach.
             if (req.Method == HttpMethod.Post && url.Contains("/file/add"))
@@ -416,7 +442,7 @@ public sealed class MultiRepoKnowledgeSyncTests : IDisposable
             var url = req.RequestUri!.ToString();
             if (req.Method == HttpMethod.Get)
                 return JsonOk("""[{"id":"kb-1","name":"myrepo"}]""");
-            if (req.Method == HttpMethod.Post && url.EndsWith("/api/v1/files/"))
+            if (req.Method == HttpMethod.Post && url == UploadUrl)
                 return JsonOk("""{"id":"file-001"}""");
             if (req.Method == HttpMethod.Post && url.Contains("/file/add"))
                 return JsonOk("{}");

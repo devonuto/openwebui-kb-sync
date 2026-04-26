@@ -328,7 +328,7 @@ public class MultiRepoKnowledgeSync
                     using var content = new MultipartFormDataContent();
                     using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
                     content.Add(new StreamContent(fileStream), "file", Path.GetFileName(filePath));
-                    return await _client.PostAsync($"{_baseUrl}/api/v1/files/", content);
+                    return await _client.PostAsync($"{_baseUrl}/api/v1/files/?process=true&process_in_background=false", content);
                 },
                 "upload file",
                 relativePath);
