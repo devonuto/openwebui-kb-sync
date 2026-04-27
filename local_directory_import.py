@@ -250,7 +250,7 @@ async def _vectorize_file(
 class Tools:
     class Valves(BaseModel):
         allowed_base_dirs: list = Field(
-            default=[],
+            default=['/app/backend/data/drop'],
             description=(
                 'Permitted root directories for import. Empty = deny all. '
                 'Paths must be absolute. Note: local filesystem only — '

@@ -38,9 +38,9 @@ The tool returns a JSON summary with per-KB breakdowns (discovered / imported / 
 
 | Valve | Type | Default | Description |
 | -- | -- | -- | -- |
-| `allowed_base_dirs` | `list[str]` | `[]` (deny all) | Absolute paths that are permitted as drop-folder roots. The `drop_folder` argument must resolve to a path inside one of these directories. |
+| `allowed_base_dirs` | `list[str]` | `["/app/backend/data/drop"]` | Absolute paths that are permitted as drop-folder roots. The `drop_folder` argument must resolve to a path inside one of these directories. |
 
-> **Important:** `allowed_base_dirs` defaults to an empty list, which **denies all imports**. Add at least one permitted base directory before use.
+> **Note:** The default matches the standard Open WebUI Docker volume mount path. Adjust if your setup differs.
 
 ## Usage
 
