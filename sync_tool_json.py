@@ -68,7 +68,8 @@ def _sync_once(
     payload["content"] = src_text
 
     ordered = _ordered_payload(payload)
-    rendered = json.dumps(ordered, indent=2, ensure_ascii=False) + "\n"
+    # Open WebUI Tools import expects an array (same shape as tools export files).
+    rendered = json.dumps([ordered], indent=2, ensure_ascii=False) + "\n"
 
     current = json_path.read_text(encoding="utf-8") if json_path.exists() else None
     if current == rendered:

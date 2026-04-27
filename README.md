@@ -31,7 +31,7 @@ The tool returns a JSON summary with per-KB breakdowns (discovered / imported / 
 
 1. In Open WebUI, go to **Workspace → Tools**.
 2. Click **Import** (or the **+** flow that accepts JSON).
-3. Select [`local_directory_import.tool.json`](local_directory_import.tool.json).
+3. Select [`local_directory_import.tool.json`](local_directory_import.tool.json) (this file uses the same array format as Open WebUI tool exports).
 4. Save.
 
 > **Fallback:** If your build only shows a raw Python editor, paste the contents of [`local_directory_import.py`](local_directory_import.py) directly and save.
