@@ -2,6 +2,7 @@
 
 import json
 import pathlib
+import stat
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,7 +18,7 @@ def _make_import_module():
 
     mocks = {
         'fastapi': MagicMock(),
-        'pydantic': MagicMock(),
+        'pydantic': MagicMock(BaseModel=object),
         'sqlalchemy': MagicMock(),
         'open_webui': MagicMock(),
         'open_webui.config': MagicMock(UPLOAD_DIR='/tmp/uploads'),
@@ -232,7 +233,7 @@ async def test_import_local_directory_happy_path(tmp_path):
         patch.object(_plugin_module, 'process_file', new=AsyncMock(return_value=None)),
         patch('shutil.copy'),
         patch.object(_plugin_module, '_find_or_create_kb') as mock_fock,
-        patch.object(pathlib.Path, 'stat') as mock_stat,
+        patch.object(_plugin_module, '_find_file_by_hash', new=AsyncMock(return_value=None)),
         patch.object(_plugin_module, 'get_async_db'),
     ):
         # First subfolder (azure-functions) → existing KB, second (power-platform) → new KB
@@ -240,7 +241,6 @@ async def test_import_local_directory_happy_path(tmp_path):
             ('kb-az', False),   # azure-functions (sorted first)
             ('kb-pp', True),    # power-platform
         ]
-        mock_stat.return_value = MagicMock(st_size=100)
 
         # Patch get_async_db to be an async context manager
         async_ctx = MagicMock()
@@ -367,8 +367,9 @@ class TestVectorization:
             ),
             patch.object(_plugin_module, 'process_file', new=AsyncMock(return_value=None)) as mock_proc,
             patch('shutil.copy'),
+            patch.object(_plugin_module, '_insert_file_record', new=AsyncMock(return_value=None)),
             patch.object(_plugin_module, '_find_or_create_kb', new=AsyncMock(return_value=('kb-id', False))),
-            patch.object(pathlib.Path, 'stat', return_value=MagicMock(st_size=10)),
+            patch.object(_plugin_module, '_find_file_by_hash', new=AsyncMock(return_value=None)),
             patch.object(_plugin_module, 'get_async_db'),
         ):
             async_ctx = MagicMock()
@@ -393,10 +394,10 @@ class TestVectorization:
         (sub / 'file.txt').write_text('content')
 
         admin_user = {'id': 'a1', 'role': 'admin', 'email': 'a@x.com', 'name': 'A'}
-        mock_insert = AsyncMock(return_value=MagicMock())
+        mock_insert_record = AsyncMock(return_value=None)
 
         with (
-            patch.object(_plugin_module.Files, 'insert_new_file', new=mock_insert),
+            patch.object(_plugin_module.Files, 'insert_new_file', new=AsyncMock(return_value=MagicMock())),
             patch.object(
                 _plugin_module.Knowledges,
                 'add_file_to_knowledge_by_id',
@@ -408,8 +409,9 @@ class TestVectorization:
                 new=AsyncMock(side_effect=RuntimeError('embedding failed')),
             ),
             patch('shutil.copy'),
+            patch.object(_plugin_module, '_insert_file_record', new=mock_insert_record),
             patch.object(_plugin_module, '_find_or_create_kb', new=AsyncMock(return_value=('kb-id', False))),
-            patch.object(pathlib.Path, 'stat', return_value=MagicMock(st_size=10)),
+            patch.object(_plugin_module, '_find_file_by_hash', new=AsyncMock(return_value=None)),
             patch.object(_plugin_module, 'get_async_db'),
         ):
             async_ctx = MagicMock()
@@ -426,8 +428,8 @@ class TestVectorization:
         assert kb['failed'] == 1
         assert kb['processed'] == 0
         assert kb['files'][0]['status'] == 'vectorization_failed'
-        # File record was created (insert_new_file was called)
-        mock_insert.assert_awaited_once()
+        # File record was created (_insert_file_record was called)
+        mock_insert_record.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_mixed_vectorization_results_accurate_counts(self, tmp_path):
@@ -455,8 +457,9 @@ class TestVectorization:
             ),
             patch.object(_plugin_module, 'process_file', new=alternating_process),
             patch('shutil.copy'),
+            patch.object(_plugin_module, '_insert_file_record', new=AsyncMock(return_value=None)),
             patch.object(_plugin_module, '_find_or_create_kb', new=AsyncMock(return_value=('kb-id', False))),
-            patch.object(pathlib.Path, 'stat', return_value=MagicMock(st_size=10)),
+            patch.object(_plugin_module, '_find_file_by_hash', new=AsyncMock(return_value=None)),
             patch.object(_plugin_module, 'get_async_db'),
         ):
             async_ctx = MagicMock()
