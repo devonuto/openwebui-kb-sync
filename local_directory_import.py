@@ -23,6 +23,7 @@ import pathlib
 import shutil
 import uuid
 from dataclasses import asdict, dataclass, field
+from types import SimpleNamespace
 
 from fastapi import Request
 from pydantic import BaseModel, Field
@@ -90,36 +91,66 @@ def _ensure_openwebui_imports() -> None:
             'users': 'apps.webui.models.users',
             'retrieval': 'apps.webui.routers.retrieval',
         },
+        {
+            'config': 'backend.open_webui.config',
+            'db': 'backend.open_webui.internal.db',
+            'files': 'backend.open_webui.models.files',
+            'knowledge': 'backend.open_webui.models.knowledge',
+            'users': 'backend.open_webui.models.users',
+            'retrieval': 'backend.open_webui.routers.retrieval',
+        },
     )
 
-    last_exc = None
+    errors = []
     for modules in candidates:
         try:
             config_mod = importlib.import_module(modules['config'])
             db_mod = importlib.import_module(modules['db'])
             files_mod = importlib.import_module(modules['files'])
             knowledge_mod = importlib.import_module(modules['knowledge'])
-            users_mod = importlib.import_module(modules['users'])
             retrieval_mod = importlib.import_module(modules['retrieval'])
 
-            UPLOAD_DIR = getattr(config_mod, 'UPLOAD_DIR')
-            get_async_db = getattr(db_mod, 'get_async_db')
-            File = getattr(files_mod, 'File')
-            FileForm = getattr(files_mod, 'FileForm')
-            Files = getattr(files_mod, 'Files')
-            Knowledge = getattr(knowledge_mod, 'Knowledge')
-            KnowledgeForm = getattr(knowledge_mod, 'KnowledgeForm')
-            Knowledges = getattr(knowledge_mod, 'Knowledges')
-            UserModel = getattr(users_mod, 'UserModel')
-            ProcessFileForm = getattr(retrieval_mod, 'ProcessFileForm')
-            process_file = getattr(retrieval_mod, 'process_file')
+            users_mod = None
+            try:
+                users_mod = importlib.import_module(modules['users'])
+            except Exception:
+                users_mod = None
+
+            UPLOAD_DIR = getattr(config_mod, 'UPLOAD_DIR', None)
+            get_async_db = getattr(db_mod, 'get_async_db', None)
+            File = getattr(files_mod, 'File', None)
+            FileForm = getattr(files_mod, 'FileForm', None)
+            Files = getattr(files_mod, 'Files', None)
+            Knowledge = getattr(knowledge_mod, 'Knowledge', None)
+            KnowledgeForm = getattr(knowledge_mod, 'KnowledgeForm', None)
+            Knowledges = getattr(knowledge_mod, 'Knowledges', None)
+            UserModel = getattr(users_mod, 'UserModel', None) if users_mod else None
+            ProcessFileForm = getattr(retrieval_mod, 'ProcessFileForm', None)
+            process_file = getattr(retrieval_mod, 'process_file', None)
+
+            required = {
+                'UPLOAD_DIR': UPLOAD_DIR,
+                'get_async_db': get_async_db,
+                'File': File,
+                'FileForm': FileForm,
+                'Files': Files,
+                'KnowledgeForm': KnowledgeForm,
+                'Knowledges': Knowledges,
+                'process_file': process_file,
+            }
+            missing = [name for name, value in required.items() if value is None]
+            if missing:
+                errors.append(f"{modules['config']}: missing {', '.join(missing)}")
+                continue
+
             return
         except Exception as exc:
-            last_exc = exc
+            errors.append(f"{modules['config']}: {exc}")
 
     raise ImportError(
-        'Unable to resolve Open WebUI tool imports for this environment.'
-    ) from last_exc
+        'Unable to resolve Open WebUI tool imports for this environment. '
+        + ' | '.join(errors)
+    )
 
 log = logging.getLogger(__name__)
 
@@ -285,12 +316,21 @@ async def _find_or_create_kb(kb_name: str, user_id: str, db) -> tuple:
     new knowledge base was created during this call.
     """
     _ensure_openwebui_imports()
-    result = await db.execute(
-        select(Knowledge).where(Knowledge.name == kb_name).limit(1)
-    )
-    existing = result.scalars().first()
+
+    existing = None
+    if Knowledge is not None:
+        result = await db.execute(
+            select(Knowledge).where(Knowledge.name == kb_name).limit(1)
+        )
+        existing = result.scalars().first()
+    elif hasattr(Knowledges, 'get_knowledge_bases'):
+        # Compatibility fallback for builds where the ORM class symbol is not exposed.
+        kbs = await Knowledges.get_knowledge_bases(skip=0, limit=2000, db=db)
+        existing = next((kb for kb in kbs if getattr(kb, 'name', None) == kb_name), None)
+
     if existing:
         return (existing.id, False)
+
     new_kb = await Knowledges.insert_new_knowledge(
         user_id,
         KnowledgeForm(
@@ -327,9 +367,14 @@ async def _vectorize_file(
 ) -> None:
     """Vectorize a file into the KB's collection via the retrieval pipeline."""
     _ensure_openwebui_imports()
+    form = (
+        ProcessFileForm(file_id=file_id, collection_name=knowledge_id)
+        if ProcessFileForm is not None
+        else SimpleNamespace(file_id=file_id, collection_name=knowledge_id, content=None)
+    )
     await process_file(
         request,
-        ProcessFileForm(file_id=file_id, collection_name=knowledge_id),
+        form,
         user=user,
         db=db,
     )
@@ -428,7 +473,7 @@ class Tools:
             )
 
         user_id = __user__['id']
-        user = UserModel(**__user__)
+        user = UserModel(**__user__) if UserModel is not None else __user__
         kb_summaries = []
 
         # 4. Discover immediate subfolders
