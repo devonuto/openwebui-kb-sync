@@ -28,7 +28,7 @@ def _read_json(path: pathlib.Path) -> dict[str, Any]:
 
 def _ordered_payload(payload: dict[str, Any]) -> dict[str, Any]:
     ordered: dict[str, Any] = {}
-    for key in ("id", "name", "description", "content"):
+    for key in ("id", "name", "meta", "content", "access_grants"):
         if key in payload:
             ordered[key] = payload[key]
     for key, value in payload.items():
@@ -49,15 +49,22 @@ def _sync_once(
 
     src_text = src.read_text(encoding="utf-8")
     existing = _read_json(json_path)
+    existing_meta = existing.get("meta") if isinstance(existing.get("meta"), dict) else {}
 
     payload: dict[str, Any] = dict(existing)
     payload["id"] = tool_id or existing.get("id") or src.stem
     payload["name"] = tool_name or existing.get("name") or src.stem
-    payload["description"] = (
+    description = (
         tool_description
+        or existing_meta.get("description")
         or existing.get("description")
         or f"Tool generated from {src.name}"
     )
+    payload["meta"] = {
+        **existing_meta,
+        "description": description,
+    }
+    payload.pop("description", None)
     payload["content"] = src_text
 
     ordered = _ordered_payload(payload)

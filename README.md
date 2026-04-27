@@ -36,6 +36,15 @@ The tool returns a JSON summary with per-KB breakdowns (discovered / imported / 
 
 > **Fallback:** If your build only shows a raw Python editor, paste the contents of [`local_directory_import.py`](local_directory_import.py) directly and save.
 
+### Import troubleshooting (tool not visible)
+
+If import succeeds but you still do not see the tool:
+
+1. Confirm you have **Workspace Tools** permission (or admin role).
+2. Open **Workspace -> Tools** and verify `Local Directory Import` is listed.
+3. In **Workspace -> Models -> (your model) -> Tools**, attach/enable the tool for that model.
+4. In chat, use the **+** tool picker and ensure your user has read access to that tool.
+
 ## Configuration (Valves)
 
 | Valve | Type | Default | Description |
