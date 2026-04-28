@@ -57,6 +57,7 @@ _plugin_module, _ = _make_import_module()
 # Re-export symbols for brevity
 _discover_subfolders = _plugin_module._discover_subfolders
 _discover_files = _plugin_module._discover_files
+_find_file_by_hash = _plugin_module._find_file_by_hash
 _find_or_create_kb = _plugin_module._find_or_create_kb
 ImportSummary = _plugin_module.ImportSummary
 KBImportSummary = _plugin_module.KBImportSummary
@@ -90,22 +91,25 @@ class TestDiscoverSubfolders:
 
 class TestDiscoverFiles:
     def test_flat_subfolder(self, tmp_path):
-        """(d) Flat subfolder returns all files."""
+        """(d) Flat subfolder returns only markdown and image files."""
         (tmp_path / 'a.txt').write_text('a')
         (tmp_path / 'b.md').write_text('b')
+        (tmp_path / 'c.png').write_bytes(b'png')
         result = _discover_files(tmp_path)
-        assert sorted(p.name for p in result) == ['a.txt', 'b.md']
+        assert sorted(p.name for p in result) == ['b.md', 'c.png']
 
     def test_nested_subdirectories(self, tmp_path):
-        """(e) Nested subdirectories returns all files recursively."""
+        """(e) Nested subdirectories returns supported files recursively."""
         sub = tmp_path / 'sub'
         sub.mkdir()
-        (tmp_path / 'root.txt').write_text('r')
+        (tmp_path / 'root.png').write_bytes(b'png')
         (sub / 'nested.md').write_text('n')
+        (sub / 'ignored.bin').write_bytes(b'bin')
         result = _discover_files(tmp_path)
         names = sorted(p.name for p in result)
-        assert 'root.txt' in names
+        assert 'root.png' in names
         assert 'nested.md' in names
+        assert 'ignored.bin' not in names
 
     def test_empty_subfolder(self, tmp_path):
         """(f) Empty subfolder returns empty list."""
@@ -169,6 +173,38 @@ class TestFindOrCreateKb:
 
         assert result == ('fallback-id', False)
 
+    @pytest.mark.asyncio
+    async def test_sync_db_execute_result_is_supported(self):
+        """Synchronous SQLAlchemy execute results are accepted."""
+        fake_kb = MagicMock()
+        fake_kb.id = 'existing-id'
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.first.return_value = fake_kb
+
+        mock_db = MagicMock()
+        mock_db.execute = MagicMock(return_value=mock_result)
+
+        result = await _find_or_create_kb('my-kb', 'user-1', mock_db)
+        assert result == ('existing-id', False)
+
+
+class TestFindFileByHash:
+    @pytest.mark.asyncio
+    async def test_sync_db_execute_result_is_supported(self):
+        """Hash lookup works when db.execute returns a sync result object."""
+        fake_file = MagicMock()
+        fake_file.id = 'file-id'
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.first.return_value = fake_file
+
+        mock_db = MagicMock()
+        mock_db.execute = MagicMock(return_value=mock_result)
+
+        result = await _find_file_by_hash('abc123', mock_db)
+        assert result is fake_file
+
 
 # ---------------------------------------------------------------------------
 # T014 — import_local_directory happy path
@@ -190,7 +226,7 @@ async def test_import_local_directory_happy_path(tmp_path):
 
     af = tmp_path / 'azure-functions'
     af.mkdir()
-    (af / 'main.py').write_text("print('hello')")
+    (af / 'diagram.png').write_bytes(b'png')
 
     admin_user = {
         'id': 'admin-1',
@@ -239,13 +275,14 @@ async def test_import_local_directory_happy_path(tmp_path):
 
     data = json.loads(result_str)
     assert 'error' not in data or data['error'] is None
-    assert data['total_discovered'] == 3  # 2 + 1
+    assert data['total_discovered'] == 3  # 2 + 1 supported files
     assert len(data['knowledge_bases']) == 2
 
     # kb_created flags
     kb_map = {kb['kb_name']: kb for kb in data['knowledge_bases']}
     assert kb_map['azure-functions']['kb_created'] is False
     assert kb_map['power-platform']['kb_created'] is True
+    assert kb_map['azure-functions']['files'][0]['relative_path'] == 'diagram.png'
 
     # relative_path is relative to subfolder root
     pp_files = kb_map['power-platform']['files']
@@ -327,7 +364,7 @@ class TestVectorization:
         """(a) Successful vectorization increments processed count."""
         sub = tmp_path / 'kb1'
         sub.mkdir()
-        (sub / 'file.txt').write_text('content')
+        (sub / 'file.md').write_text('content')
 
         admin_user = {'id': 'a1', 'role': 'admin', 'email': 'a@x.com', 'name': 'A'}
 
@@ -368,7 +405,7 @@ class TestVectorization:
         """(b) Vectorization exception: status=vectorization_failed, file record kept, failed incremented."""
         sub = tmp_path / 'kb1'
         sub.mkdir()
-        (sub / 'file.txt').write_text('content')
+        (sub / 'file.md').write_text('content')
 
         admin_user = {'id': 'a1', 'role': 'admin', 'email': 'a@x.com', 'name': 'A'}
         mock_insert_record = AsyncMock(return_value=None)
@@ -414,7 +451,7 @@ async def test_import_local_directory_supports_generator_db_dependency(tmp_path)
     """Generator-based DB dependency is accepted for Open WebUI compatibility."""
     sub = tmp_path / 'kb1'
     sub.mkdir()
-    (sub / 'file.txt').write_text('content')
+    (sub / 'file.md').write_text('content')
 
     admin_user = {'id': 'a1', 'role': 'admin', 'email': 'a@x.com', 'name': 'A'}
     fake_db = MagicMock()
@@ -455,7 +492,7 @@ async def test_import_local_directory_surfaces_kb_creation_errors(tmp_path):
     """KB creation errors are reported in the JSON summary instead of hidden."""
     sub = tmp_path / 'kb1'
     sub.mkdir()
-    (sub / 'file.txt').write_text('content')
+    (sub / 'file.md').write_text('content')
 
     admin_user = {'id': 'a1', 'role': 'admin', 'email': 'a@x.com', 'name': 'A'}
 
@@ -486,8 +523,8 @@ async def test_import_local_directory_surfaces_kb_creation_errors(tmp_path):
         """(c) Mixed success/failure across files: summary counts accurate."""
         sub = tmp_path / 'kb1'
         sub.mkdir()
-        (sub / 'good.txt').write_text('good')
-        (sub / 'bad.txt').write_text('bad')
+        (sub / 'good.md').write_text('good')
+        (sub / 'bad.md').write_text('bad')
 
         admin_user = {'id': 'a1', 'role': 'admin', 'email': 'a@x.com', 'name': 'A'}
 

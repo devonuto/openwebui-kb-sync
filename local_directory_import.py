@@ -218,10 +218,19 @@ def _hash_file(path: pathlib.Path, chunk_size: int = 65536) -> str:
     return h.hexdigest()
 
 
+async def _db_execute(db, statement):
+    """Execute a statement across async and sync SQLAlchemy session shapes."""
+    result = db.execute(statement)
+    if inspect.isawaitable(result):
+        return await result
+    return result
+
+
 async def _find_file_by_hash(file_hash: str, db) -> 'File | None':
     """Return the first File record whose hash matches *file_hash*, or None."""
     _ensure_openwebui_imports()
-    result = await db.execute(
+    result = await _db_execute(
+        db,
         select(File).where(File.hash == file_hash).limit(1)
     )
     return result.scalars().first()
@@ -237,9 +246,21 @@ def _discover_subfolders(drop_folder: pathlib.Path) -> list:
     return sorted([p for p in drop_folder.iterdir() if p.is_dir()])
 
 
+def _is_supported_import_file(path: pathlib.Path) -> bool:
+    """Return True when *path* is a markdown or image file."""
+    suffix = path.suffix.lower()
+    if suffix in {'.md', '.markdown', '.mdown', '.mkd'}:
+        return True
+
+    content_type = mimetypes.guess_type(path.name)[0] or ''
+    return content_type.startswith('image/')
+
+
 def _discover_files(subfolder: pathlib.Path) -> list:
-    """Return a sorted list of all files recursively inside *subfolder*."""
-    return sorted([p for p in subfolder.rglob('*') if p.is_file()])
+    """Return supported markdown/image files recursively inside *subfolder*."""
+    return sorted(
+        [p for p in subfolder.rglob('*') if p.is_file() and _is_supported_import_file(p)]
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +323,8 @@ async def _find_or_create_kb(kb_name: str, user_id: str, db) -> tuple:
     lookup_errors = []
     if Knowledge is not None:
         try:
-            result = await db.execute(
+            result = await _db_execute(
+                db,
                 select(Knowledge).where(Knowledge.name == kb_name).limit(1)
             )
             existing = result.scalars().first()
