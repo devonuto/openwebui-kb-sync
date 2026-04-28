@@ -11,6 +11,7 @@ The drop_folder argument defaults to /app/backend/data/drop.
 """
 
 import asyncio
+import collections.abc
 import inspect
 import logging
 import sys
@@ -35,6 +36,91 @@ async def _maybe_await(value):
     return value
 
 
+def _get_field(obj, key, default=None):
+    """Read field from dict-like or attribute-style objects."""
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _normalize_items(value):
+    """Normalize mixed API return shapes to a list of items."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        # Some APIs return (items, total)
+        if value and isinstance(value[0], list):
+            return value[0]
+        return [v for v in value if v is not None]
+    if isinstance(value, dict):
+        # Common wrapper shapes: {"users": [...]}, {"data": [...]}
+        for key in ('users', 'data', 'items', 'results'):
+            nested = value.get(key)
+            if isinstance(nested, list):
+                return nested
+        return [value]
+    return [value]
+
+
+async def _collect_users(users_api):
+    """Collect users from multiple possible API shapes/method names."""
+    users = []
+    getter_names = ('get_users', 'get_all_users', 'list_users')
+    for name in getter_names:
+        getter = getattr(users_api, name, None)
+        if getter is None:
+            continue
+        try:
+            value = getter()
+            value = await _maybe_await(value)
+            if inspect.isasyncgen(value):
+                async for item in value:
+                    users.extend(_normalize_items(item))
+            elif isinstance(value, collections.abc.Generator):
+                for item in value:
+                    users.extend(_normalize_items(item))
+            else:
+                users.extend(_normalize_items(value))
+        except Exception as exc:
+            log.warning('run_import users getter %s failed: %s', name, exc)
+    if users:
+        return users
+
+    # Last resort: single-user getter.
+    first_getter = getattr(users_api, 'get_first_user', None)
+    if first_getter is not None:
+        try:
+            first = await _maybe_await(first_getter())
+            return _normalize_items(first)
+        except Exception as exc:
+            log.warning('run_import users getter get_first_user failed: %s', exc)
+
+    return []
+
+
+def _is_admin_user(user) -> bool:
+    """Return True when user appears to have admin privileges."""
+    role = _get_field(user, 'role', '')
+    role_texts = [str(role)]
+    # Handle enum-like roles.
+    role_value = getattr(role, 'value', None)
+    role_name = getattr(role, 'name', None)
+    if role_value is not None:
+        role_texts.append(str(role_value))
+    if role_name is not None:
+        role_texts.append(str(role_name))
+
+    if any(text.strip().lower() == 'admin' for text in role_texts):
+        return True
+
+    if bool(_get_field(user, 'is_admin', False)):
+        return True
+
+    return False
+
+
 async def main() -> None:
     # ── 1. Find the first admin user ─────────────────────────────────────────
     # Import only the users model to avoid triggering the full app startup.
@@ -44,24 +130,39 @@ async def main() -> None:
         sys.exit(f'ERROR: cannot import open_webui.models.users: {exc}')
 
     try:
-        all_users = await _maybe_await(Users.get_users()) or []
+        all_users = await _collect_users(Users)
     except Exception as exc:
-        sys.exit(f'ERROR: Users.get_users() failed: {exc}')
+        sys.exit(f'ERROR: users lookup failed: {exc}')
+
+    log.info('run_import users_found=%d', len(all_users))
+    if all_users:
+        preview = [
+            {
+                'id': _get_field(u, 'id', '?'),
+                'email': _get_field(u, 'email', ''),
+                'role': str(_get_field(u, 'role', '')),
+                'is_admin': bool(_get_field(u, 'is_admin', False)),
+            }
+            for u in all_users[:5]
+        ]
+        log.info('run_import users_preview=%s', preview)
 
     admin = next(
-        (u for u in all_users if getattr(u, 'role', '') == 'admin'),
+        (u for u in all_users if _is_admin_user(u)),
         None,
     )
     if admin is None:
         sys.exit('ERROR: no admin user found in the database')
 
     user_dict = {
-        'id': admin.id,
-        'email': getattr(admin, 'email', ''),
-        'name': getattr(admin, 'name', 'admin'),
+        'id': _get_field(admin, 'id'),
+        'email': _get_field(admin, 'email', ''),
+        'name': _get_field(admin, 'name', 'admin'),
         'role': 'admin',
     }
-    log.info('run_import admin_id=%s email=%s', admin.id, user_dict['email'])
+    if not user_dict['id']:
+        sys.exit('ERROR: admin user resolved but id is missing')
+    log.info('run_import admin_id=%s email=%s', user_dict['id'], user_dict['email'])
 
     # ── 2. Build a Starlette Request backed by the real app state ─────────────
     # process_file() (vectorization) reads request.app.state for RAG config.
