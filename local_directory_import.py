@@ -6,7 +6,7 @@ Each immediate subfolder of the drop folder is auto-mapped to a knowledge base
 named after it (created if it does not exist). Files are copied to UPLOAD_DIR,
 registered in the database, linked to the corresponding KB, and vectorized.
 
-Admin-only access. Allow-list path security via Valves.
+Admin-only access. The drop folder path is configured via Valves.
 Returns a JSON summary with per-KB breakdowns.
 
 Note: local filesystem only — not compatible with S3/GCS/Azure storage backends.
@@ -15,6 +15,7 @@ Note: local filesystem only — not compatible with S3/GCS/Azure storage backend
 __version__ = '0.1.0'
 
 import hashlib
+import inspect
 import importlib
 import json
 import logging
@@ -23,6 +24,7 @@ import pathlib
 import shutil
 import sys
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
 from types import SimpleNamespace
 
@@ -358,6 +360,50 @@ async def _vectorize_file(
     )
 
 
+@asynccontextmanager
+async def _open_db_session():
+    """Yield a DB session across Open WebUI dependency shapes."""
+    _ensure_openwebui_imports()
+    db_provider = get_async_db()
+
+    if inspect.isawaitable(db_provider) and not hasattr(db_provider, '__aenter__'):
+        db_provider = await db_provider
+
+    if hasattr(db_provider, '__aenter__') and hasattr(db_provider, '__aexit__'):
+        async with db_provider as db:
+            yield db
+        return
+
+    if hasattr(db_provider, '__enter__') and hasattr(db_provider, '__exit__'):
+        with db_provider as db:
+            yield db
+        return
+
+    if inspect.isasyncgen(db_provider):
+        try:
+            db = await anext(db_provider)
+        except StopAsyncIteration as exc:
+            raise RuntimeError('get_async_db yielded no database session') from exc
+        try:
+            yield db
+        finally:
+            await db_provider.aclose()
+        return
+
+    if inspect.isgenerator(db_provider):
+        try:
+            db = next(db_provider)
+        except StopIteration as exc:
+            raise RuntimeError('get_async_db yielded no database session') from exc
+        try:
+            yield db
+        finally:
+            db_provider.close()
+        return
+
+    yield db_provider
+
+
 # ---------------------------------------------------------------------------
 # Tool class
 # ---------------------------------------------------------------------------
@@ -386,7 +432,7 @@ class Tools:
         Import all files from the configured drop folder into knowledge bases.
 
         The drop folder path is set by the admin in the Valves configuration
-        (allowed_base_dirs). Each immediate subfolder is mapped to a knowledge
+        (drop_folder). Each immediate subfolder is mapped to a knowledge
         base with the same name (created automatically if it does not exist).
         All files within each subfolder (recursively) are copied to the upload
         directory, registered in the database, linked to the KB, and vectorized.
@@ -457,7 +503,7 @@ class Tools:
             kb_name = subfolder.name
 
             # 4. Find or create the knowledge base for this subfolder
-            async with get_async_db() as db:
+            async with _open_db_session() as db:
                 try:
                     knowledge_id, kb_created = await _find_or_create_kb(kb_name, user_id, db)
                 except Exception as exc:

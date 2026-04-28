@@ -389,6 +389,47 @@ class TestVectorization:
         # File record was created (_insert_file_record was called)
         mock_insert_record.assert_awaited_once()
 
+
+@pytest.mark.asyncio
+async def test_import_local_directory_supports_generator_db_dependency(tmp_path):
+    """Generator-based DB dependency is accepted for Open WebUI compatibility."""
+    sub = tmp_path / 'kb1'
+    sub.mkdir()
+    (sub / 'file.txt').write_text('content')
+
+    admin_user = {'id': 'a1', 'role': 'admin', 'email': 'a@x.com', 'name': 'A'}
+    fake_db = MagicMock()
+
+    def db_generator():
+        yield fake_db
+
+    with (
+        patch.object(
+            _plugin_module.Files,
+            'insert_new_file',
+            new=AsyncMock(return_value=MagicMock()),
+        ),
+        patch.object(
+            _plugin_module.Knowledges,
+            'add_file_to_knowledge_by_id',
+            new=AsyncMock(return_value=MagicMock()),
+        ),
+        patch.object(_plugin_module, 'process_file', new=AsyncMock(return_value=None)),
+        patch('shutil.copy'),
+        patch.object(_plugin_module, '_insert_file_record', new=AsyncMock(return_value=None)),
+        patch.object(_plugin_module, '_find_or_create_kb', new=AsyncMock(return_value=('kb-id', False))) as mock_find_kb,
+        patch.object(_plugin_module, '_find_file_by_hash', new=AsyncMock(return_value=None)),
+        patch.object(_plugin_module, 'get_async_db', new=MagicMock(return_value=db_generator())),
+    ):
+        tools = Tools()
+        tools.valves.drop_folder = str(tmp_path)
+        result_str = await tools.import_local_directory(admin_user, MagicMock())
+
+    data = json.loads(result_str)
+    assert data['error'] is None
+    assert data['total_processed'] == 1
+    mock_find_kb.assert_awaited_once_with('kb1', 'a1', fake_db)
+
     @pytest.mark.asyncio
     async def test_mixed_vectorization_results_accurate_counts(self, tmp_path):
         """(c) Mixed success/failure across files: summary counts accurate."""
