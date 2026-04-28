@@ -92,24 +92,33 @@ class TestDiscoverSubfolders:
         assert _discover_subfolders(tmp_path) == []
 
     def test_hidden_subdirs_excluded(self, tmp_path):
-        """(d) Hidden subdirectories (e.g. .git) are excluded from subfolders."""
+        """(d) Dot-prefixed directories are excluded except .attachments."""
         (tmp_path / 'visible').mkdir()
         (tmp_path / '.git').mkdir()
         (tmp_path / '.hidden').mkdir()
         result = _discover_subfolders(tmp_path)
         assert [p.name for p in result] == ['visible']
 
+    def test_attachments_subfolder_included(self, tmp_path):
+        """(e) .attachments directory is NOT excluded — it is a valid content folder."""
+        (tmp_path / 'docs').mkdir()
+        (tmp_path / '.attachments').mkdir()
+        result = _discover_subfolders(tmp_path)
+        assert sorted(p.name for p in result) == ['.attachments', 'docs']
+
 
 class TestDiscoverFiles:
     def test_flat_subfolder(self, tmp_path):
-        """(d) Flat subfolder returns only allowed doc files."""
+        """(d) Flat subfolder returns only allowed doc files, including png and svg."""
         (tmp_path / 'a.txt').write_text('a')
         (tmp_path / 'b.md').write_text('b')
         (tmp_path / 'c.json').write_text('{"k": 1}')
         (tmp_path / 'e.pdf').write_bytes(b'%PDF-1.4')
-        (tmp_path / 'd.png').write_bytes(b'png')
+        (tmp_path / 'd.png').write_bytes(b'\x89PNG')
+        (tmp_path / 'f.svg').write_text('<svg/>')
+        (tmp_path / 'g.bin').write_bytes(b'bin')
         result = _discover_files(tmp_path)
-        assert sorted(p.name for p in result) == ['a.txt', 'b.md', 'c.json', 'e.pdf']
+        assert sorted(p.name for p in result) == ['a.txt', 'b.md', 'c.json', 'd.png', 'e.pdf', 'f.svg']
 
     def test_nested_subdirectories(self, tmp_path):
         """(e) Nested subdirectories returns allowed files recursively."""
@@ -144,13 +153,24 @@ class TestDiscoverFiles:
         assert names == ['readme.md']
 
     def test_nested_hidden_directory_files_excluded(self, tmp_path):
-        """(h) Files nested deeper inside a hidden directory are also excluded."""
+        """(h) Files nested inside any dot-prefixed dir (except .attachments) are excluded."""
         hidden = tmp_path / '.hidden' / 'sub'
         hidden.mkdir(parents=True)
         (hidden / 'notes.txt').write_text('secret')
         (tmp_path / 'visible.txt').write_text('visible')
         result = _discover_files(tmp_path)
         assert [p.name for p in result] == ['visible.txt']
+
+    def test_attachments_dir_files_included(self, tmp_path):
+        """(i) Files inside .attachments are discovered (not a blocklisted dir)."""
+        attachments = tmp_path / '.attachments'
+        attachments.mkdir()
+        (attachments / 'diagram.png').write_bytes(b'\x89PNG')
+        (attachments / 'chart.svg').write_text('<svg/>')
+        (tmp_path / 'readme.md').write_text('# hi')
+        result = _discover_files(tmp_path)
+        names = sorted(p.name for p in result)
+        assert names == ['chart.svg', 'diagram.png', 'readme.md']
 
 
 # ---------------------------------------------------------------------------

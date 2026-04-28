@@ -254,13 +254,20 @@ async def _find_file_by_hash(file_hash: str, db) -> 'File | None':
 # ---------------------------------------------------------------------------
 
 
+def _is_hidden_dir(name: str) -> bool:
+    """Return True for dot-prefixed directory names except ``.attachments``."""
+    return name.startswith('.') and name != '.attachments'
+
+
 def _discover_subfolders(drop_folder: pathlib.Path) -> list:
     """Return a sorted list of immediate subdirectories inside *drop_folder*.
 
-    Hidden directories (names beginning with '.', e.g. .git) are excluded.
+    All dot-prefixed directories (e.g. ``.git``) are excluded except
+    ``.attachments``, which is a conventional image/attachment store in
+    many Markdown repositories.
     """
     return sorted(
-        [p for p in drop_folder.iterdir() if p.is_dir() and not p.name.startswith('.')]
+        [p for p in drop_folder.iterdir() if p.is_dir() and not _is_hidden_dir(p.name)]
     )
 
 
@@ -277,14 +284,16 @@ def _is_supported_import_file(path: pathlib.Path) -> bool:
         '.yml',
         '.yaml',
         '.pdf',
+        '.png',
+        '.svg',
     }
 
 
 def _discover_files(subfolder: pathlib.Path) -> list:
     """Return supported doc files recursively inside *subfolder*.
 
-    Any file whose path contains a hidden directory component (a path part
-    beginning with '.', e.g. .git) is excluded.
+    Files are excluded when any intermediate directory component would be
+    excluded by ``_is_hidden_dir`` (i.e. dot-prefixed except ``.attachments``).
     """
     base_parts = len(subfolder.parts)
     return sorted(
@@ -293,7 +302,7 @@ def _discover_files(subfolder: pathlib.Path) -> list:
             for p in subfolder.rglob('*')
             if p.is_file()
             and _is_supported_import_file(p)
-            and not any(part.startswith('.') for part in p.parts[base_parts:])
+            and not any(_is_hidden_dir(part) for part in p.parts[base_parts:])
         ]
     )
 
