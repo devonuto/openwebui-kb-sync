@@ -290,7 +290,7 @@ async def main() -> None:
         sys.exit('ERROR: no Tools class found after exec of tool content')
 
     # Reduce noisy retrieval errors when running as a scheduler job:
-    # - skip vectorization for image files
+    # - skip vectorization for image files and empty files
     # - treat EMPTY_CONTENT vectorization errors as non-fatal
     original_vectorize = module_ns.get('_vectorize_file')
     if callable(original_vectorize):
@@ -304,17 +304,39 @@ async def main() -> None:
             db,
             file_path=None,
         ):
+            filename = '?'
             suffix = ''
             if file_path is not None:
-                suffix = str(getattr(file_path, 'suffix', '')).lower()
+                import pathlib
+                file_path = pathlib.Path(file_path) if not isinstance(file_path, pathlib.Path) else file_path
+                filename = file_path.name
+                suffix = str(file_path.suffix).lower()
 
-            if suffix in skip_exts:
-                log.info(
-                    'run_import vectorize_skip file_id=%s reason=non_text_extension ext=%s',
-                    file_id,
-                    suffix,
-                )
-                return None
+                # Skip image extensions.
+                if suffix in skip_exts:
+                    log.info(
+                        'run_import vectorize_skip file=%s file_id=%s reason=image_extension',
+                        filename,
+                        file_id,
+                    )
+                    return None
+
+                # Skip empty files (file size 0).
+                try:
+                    if file_path.stat().st_size == 0:
+                        log.info(
+                            'run_import vectorize_skip file=%s file_id=%s reason=empty_file',
+                            filename,
+                            file_id,
+                        )
+                        return None
+                except Exception as stat_exc:
+                    log.warning(
+                        'run_import vectorize could not stat file=%s file_id=%s: %s',
+                        filename,
+                        file_id,
+                        stat_exc,
+                    )
 
             try:
                 result = original_vectorize(
@@ -327,12 +349,21 @@ async def main() -> None:
                 )
                 return await _maybe_await(result)
             except Exception as exc:
-                if 'content provided is empty' in str(exc).lower():
+                exc_str = str(exc).lower()
+                if 'content provided is empty' in exc_str or 'empty_content' in exc_str:
                     log.info(
-                        'run_import vectorize_skip file_id=%s reason=empty_content',
+                        'run_import vectorize_skip file=%s file_id=%s reason=empty_or_unreadable_content',
+                        filename,
                         file_id,
                     )
                     return None
+                # Log other errors with file context before re-raising
+                log.error(
+                    'run_import vectorize error file=%s file_id=%s error=%s',
+                    filename,
+                    file_id,
+                    exc_str[:200],  # Truncate long error messages
+                )
                 raise
 
         module_ns['_vectorize_file'] = _vectorize_file_safe
