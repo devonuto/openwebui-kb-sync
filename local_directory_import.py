@@ -247,17 +247,13 @@ def _discover_subfolders(drop_folder: pathlib.Path) -> list:
 
 
 def _is_supported_import_file(path: pathlib.Path) -> bool:
-    """Return True when *path* is a markdown or image file."""
+    """Return True when *path* is an allowed text/structured doc file."""
     suffix = path.suffix.lower()
-    if suffix in {'.md', '.markdown', '.mdown', '.mkd'}:
-        return True
-
-    content_type = mimetypes.guess_type(path.name)[0] or ''
-    return content_type.startswith('image/')
+    return suffix in {'.md', '.markdown', '.mdown', '.mkd', '.txt', '.json', '.yml', '.yaml'}
 
 
 def _discover_files(subfolder: pathlib.Path) -> list:
-    """Return supported markdown/image files recursively inside *subfolder*."""
+    """Return supported doc files recursively inside *subfolder*."""
     return sorted(
         [p for p in subfolder.rglob('*') if p.is_file() and _is_supported_import_file(p)]
     )

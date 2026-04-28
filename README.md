@@ -4,7 +4,7 @@ An [Open WebUI Tool plugin](https://docs.openwebui.com/features/extensibility/pl
 
 ## How it works
 
-Point the tool at a drop folder on the server's local filesystem. Each **immediate subfolder** of that folder is treated as a target Knowledge Base — the KB is created automatically if it does not already exist. Only markdown and image files found recursively inside each subfolder are imported; other file types are ignored. Supported files are then:
+Point the tool at a drop folder on the server's local filesystem. Each **immediate subfolder** of that folder is treated as a target Knowledge Base — the KB is created automatically if it does not already exist. Only supported doc files found recursively inside each subfolder are imported; other file types are ignored. Supported files are then:
 
 1. Read and hashed with SHA-256 (the source file is never modified or renamed) — if a matching hash already exists in the database the file is skipped
 2. Copied into Open WebUI's upload directory (`UPLOAD_DIR`)
@@ -21,11 +21,11 @@ The tool returns a JSON summary with per-KB breakdowns (discovered / imported / 
 ├── project-alpha/          →  KB: "project-alpha"
 │   ├── notes.md
 │   └── specs/
-│       └── architecture.png
+│       └── metadata.json
 └── onboarding/             →  KB: "onboarding"
-  ├── handbook.md
-  └── images/
-    └── faq-diagram.webp
+  ├── handbook.txt
+  └── config/
+    └── faq.yml
 ```
 
 ## Installation
@@ -104,7 +104,7 @@ No parameters — the drop folder path is set by the admin in the `drop_folder` 
 ## Limitations
 
 - **Local filesystem only.** Not compatible with S3, GCS, or Azure Blob storage backends.
-- Only markdown files (`.md`, `.markdown`, `.mdown`, `.mkd`) and image files are imported. Other file types are skipped during discovery.
+- Only markdown/text/config files (`.md`, `.markdown`, `.mdown`, `.mkd`, `.txt`, `.json`, `.yml`, `.yaml`) are imported. Images and other file types are skipped during discovery.
 - The drop folder must be accessible to the Open WebUI server process.
 - Deduplication is hash-based: a file that moves to a different path but whose content is unchanged will be skipped. A renamed file with the same content is treated as the same file.
 

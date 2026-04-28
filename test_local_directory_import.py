@@ -91,25 +91,28 @@ class TestDiscoverSubfolders:
 
 class TestDiscoverFiles:
     def test_flat_subfolder(self, tmp_path):
-        """(d) Flat subfolder returns only markdown and image files."""
+        """(d) Flat subfolder returns only allowed doc files."""
         (tmp_path / 'a.txt').write_text('a')
         (tmp_path / 'b.md').write_text('b')
-        (tmp_path / 'c.png').write_bytes(b'png')
+        (tmp_path / 'c.json').write_text('{"k": 1}')
+        (tmp_path / 'd.png').write_bytes(b'png')
         result = _discover_files(tmp_path)
-        assert sorted(p.name for p in result) == ['b.md', 'c.png']
+        assert sorted(p.name for p in result) == ['a.txt', 'b.md', 'c.json']
 
     def test_nested_subdirectories(self, tmp_path):
-        """(e) Nested subdirectories returns supported files recursively."""
+        """(e) Nested subdirectories returns allowed files recursively."""
         sub = tmp_path / 'sub'
         sub.mkdir()
-        (tmp_path / 'root.png').write_bytes(b'png')
+        (tmp_path / 'root.yaml').write_text('a: 1')
         (sub / 'nested.md').write_text('n')
         (sub / 'ignored.bin').write_bytes(b'bin')
+        (sub / 'ignored.jpg').write_bytes(b'jpg')
         result = _discover_files(tmp_path)
         names = sorted(p.name for p in result)
-        assert 'root.png' in names
+        assert 'root.yaml' in names
         assert 'nested.md' in names
         assert 'ignored.bin' not in names
+        assert 'ignored.jpg' not in names
 
     def test_empty_subfolder(self, tmp_path):
         """(f) Empty subfolder returns empty list."""
@@ -226,7 +229,7 @@ async def test_import_local_directory_happy_path(tmp_path):
 
     af = tmp_path / 'azure-functions'
     af.mkdir()
-    (af / 'diagram.png').write_bytes(b'png')
+    (af / 'main.yml').write_text('name: azure-functions')
 
     admin_user = {
         'id': 'admin-1',
@@ -282,7 +285,7 @@ async def test_import_local_directory_happy_path(tmp_path):
     kb_map = {kb['kb_name']: kb for kb in data['knowledge_bases']}
     assert kb_map['azure-functions']['kb_created'] is False
     assert kb_map['power-platform']['kb_created'] is True
-    assert kb_map['azure-functions']['files'][0]['relative_path'] == 'diagram.png'
+    assert kb_map['azure-functions']['files'][0]['relative_path'] == 'main.yml'
 
     # relative_path is relative to subfolder root
     pp_files = kb_map['power-platform']['files']
