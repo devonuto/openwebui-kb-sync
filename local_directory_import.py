@@ -299,15 +299,51 @@ def _discover_files(subfolder: pathlib.Path) -> list:
     excluded by ``_is_hidden_dir`` (i.e. dot-prefixed except ``.attachments``).
     """
     base_parts = len(subfolder.parts)
-    return sorted(
+    all_entries = list(subfolder.rglob('*'))
+    all_files = [p for p in all_entries if p.is_file()]
+    hidden_excluded = [
+        p for p in all_files
+        if any(_is_hidden_dir(part) for part in p.parts[base_parts:])
+    ]
+    unsupported_excluded = [
+        p for p in all_files
+        if not any(_is_hidden_dir(part) for part in p.parts[base_parts:])
+        and not _is_supported_import_file(p)
+    ]
+    result = sorted(
         [
             p
-            for p in subfolder.rglob('*')
-            if p.is_file()
-            and _is_supported_import_file(p)
+            for p in all_files
+            if _is_supported_import_file(p)
             and not any(_is_hidden_dir(part) for part in p.parts[base_parts:])
         ]
     )
+    log.info(
+        'local_import discover subfolder=%s rglob_entries=%d total_files=%d '
+        'hidden_excluded=%d unsupported_excluded=%d will_import=%d',
+        subfolder,
+        len(all_entries),
+        len(all_files),
+        len(hidden_excluded),
+        len(unsupported_excluded),
+        len(result),
+    )
+    if hidden_excluded:
+        log.info(
+            'local_import discover subfolder=%s hidden_excluded_paths=%s',
+            subfolder.name,
+            [str(p.relative_to(subfolder)) for p in hidden_excluded[:20]],
+        )
+    if unsupported_excluded:
+        extensions = sorted({p.suffix.lower() for p in unsupported_excluded})
+        log.info(
+            'local_import discover subfolder=%s unsupported_extensions=%s '
+            'example_files=%s',
+            subfolder.name,
+            extensions,
+            [str(p.relative_to(subfolder)) for p in unsupported_excluded[:10]],
+        )
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -697,6 +733,12 @@ class Tools:
 
         # 3. Discover immediate subfolders
         subfolders = _discover_subfolders(drop_path)
+        log.info(
+            'local_import drop_folder=%s subfolder_count=%d subfolders=%s',
+            drop_path,
+            len(subfolders),
+            [s.name for s in subfolders],
+        )
 
         for subfolder in subfolders:
             kb_name = subfolder.name
@@ -746,13 +788,27 @@ class Tools:
                 # 5. Discover and process files within this subfolder
                 files = _discover_files(subfolder)
                 kb_summary.discovered = len(files)
+                log.info(
+                    'local_import kb=%s knowledge_id=%s kb_created=%s discovered=%d',
+                    kb_name,
+                    knowledge_id,
+                    kb_created,
+                    len(files),
+                )
 
-                for file_path in files:
+                for file_idx, file_path in enumerate(files, 1):
                     file_id = str(uuid.uuid4())
                     filename = file_path.name
                     relative_path = str(file_path.relative_to(subfolder))
                     status = 'discovered'
                     error = None
+                    log.info(
+                        'local_import processing kb=%s file=%d/%d path=%s',
+                        kb_name,
+                        file_idx,
+                        len(files),
+                        relative_path,
+                    )
 
                     # Hash check — skip files that haven't changed
                     try:
