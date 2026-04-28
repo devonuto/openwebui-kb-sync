@@ -20,6 +20,8 @@ The tool returns a JSON summary with per-KB breakdowns (discovered / imported / 
 /data/drop/
 ├── project-alpha/          →  KB: "project-alpha"
 │   ├── notes.md
+│   ├── .attachments/       →  traversed (images for the docs above)
+│   │   └── diagram.png
 │   └── specs/
 │       └── metadata.json
 └── onboarding/             →  KB: "onboarding"
@@ -113,7 +115,8 @@ No parameters — behavior is controlled by Valves.
 ## Limitations
 
 - **Local filesystem only.** Not compatible with S3, GCS, or Azure Blob storage backends.
-- Only markdown/text/config/PDF files (`.md`, `.markdown`, `.mdown`, `.mkd`, `.txt`, `.json`, `.yml`, `.yaml`, `.pdf`) are imported. Images and other file types are skipped during discovery.
+- Only markdown, text, structured config, PDF, and image files (`.md`, `.markdown`, `.mdown`, `.mkd`, `.txt`, `.json`, `.yml`, `.yaml`, `.pdf`, `.png`, `.svg`) are imported. Other file types are skipped during discovery.
+- Dot-prefixed directories are excluded during discovery (e.g. `.git`, `.github`) **except** `.attachments`, which is treated as a regular content folder.
 - The drop folder must be accessible to the Open WebUI server process.
 - Deduplication is hash-based: a file that moves to a different path but whose content is unchanged will be skipped. A renamed file with the same content is treated as the same file.
 

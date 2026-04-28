@@ -286,6 +286,9 @@ def _is_supported_import_file(path: pathlib.Path) -> bool:
         '.pdf',
         '.png',
         '.svg',
+        '.jpg',
+        '.jpeg',
+        '.xml',
     }
 
 

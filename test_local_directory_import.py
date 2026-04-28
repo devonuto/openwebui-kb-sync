@@ -117,8 +117,10 @@ class TestDiscoverFiles:
         (tmp_path / 'd.png').write_bytes(b'\x89PNG')
         (tmp_path / 'f.svg').write_text('<svg/>')
         (tmp_path / 'g.bin').write_bytes(b'bin')
+        (tmp_path / 'h.jpg').write_bytes(b'jpg')
+        (tmp_path / 'i.xml').write_text('<xml/>')
         result = _discover_files(tmp_path)
-        assert sorted(p.name for p in result) == ['a.txt', 'b.md', 'c.json', 'd.png', 'e.pdf', 'f.svg']
+        assert sorted(p.name for p in result) == ['a.txt', 'b.md', 'c.json', 'd.png', 'e.pdf', 'f.svg', 'h.jpg', 'i.xml']
 
     def test_nested_subdirectories(self, tmp_path):
         """(e) Nested subdirectories returns allowed files recursively."""
@@ -135,7 +137,6 @@ class TestDiscoverFiles:
         assert 'nested.md' in names
         assert 'doc.pdf' in names
         assert 'ignored.bin' not in names
-        assert 'ignored.jpg' not in names
 
     def test_empty_subfolder(self, tmp_path):
         """(f) Empty subfolder returns empty list."""
