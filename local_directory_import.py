@@ -186,6 +186,7 @@ class KBImportSummary:
     processed: int
     failed: int
     skipped: int = 0
+    pruned: int = 0
     files: list = field(default_factory=list)
     error: str | None = None
     duration_seconds: float = 0.0
@@ -201,6 +202,7 @@ class ImportSummary:
     total_processed: int
     total_failed: int
     total_skipped: int = 0
+    total_pruned: int = 0
     knowledge_bases: list = field(default_factory=list)
     error: str | None = None
     duration_seconds: float = 0.0
@@ -555,6 +557,113 @@ async def _link_file_to_kb(knowledge_id: str, file_id: str, user_id: str, db) ->
     )
 
 
+def _extract_file_ids_from_knowledge_obj(knowledge_obj) -> set[str]:
+    """Best-effort extraction of linked file ids from a knowledge object/dict."""
+    if knowledge_obj is None:
+        return set()
+
+    if isinstance(knowledge_obj, dict):
+        data = knowledge_obj
+    else:
+        data = knowledge_obj.__dict__ if hasattr(knowledge_obj, '__dict__') else {}
+
+    file_ids: set[str] = set()
+
+    direct_ids = data.get('file_ids')
+    if isinstance(direct_ids, list):
+        file_ids.update(str(v) for v in direct_ids if v is not None)
+
+    files_value = data.get('files')
+    if isinstance(files_value, list):
+        for item in files_value:
+            if isinstance(item, dict):
+                fid = item.get('id')
+            else:
+                fid = getattr(item, 'id', None)
+            if fid is not None:
+                file_ids.add(str(fid))
+
+    nested_data = data.get('data')
+    if isinstance(nested_data, dict):
+        nested_ids = nested_data.get('file_ids')
+        if isinstance(nested_ids, list):
+            file_ids.update(str(v) for v in nested_ids if v is not None)
+        nested_files = nested_data.get('files')
+        if isinstance(nested_files, list):
+            for item in nested_files:
+                if isinstance(item, dict):
+                    fid = item.get('id') or item.get('file_id')
+                else:
+                    fid = getattr(item, 'id', None) or getattr(item, 'file_id', None)
+                if fid is not None:
+                    file_ids.add(str(fid))
+
+    return file_ids
+
+
+async def _get_kb_file_ids(knowledge_id: str, db) -> set[str]:
+    """Return linked file ids for a KB across Open WebUI API variations."""
+    _ensure_openwebui_imports()
+
+    method_names = (
+        'get_knowledge_by_id',
+        'get_knowledge_base_by_id',
+        'get_knowledge',
+    )
+    for method_name in method_names:
+        method = getattr(Knowledges, method_name, None)
+        if method is None:
+            continue
+        try:
+            kb_obj = await _call_knowledge_api(
+                method,
+                knowledge_id=knowledge_id,
+                id=knowledge_id,
+                db=db,
+            )
+            ids = _extract_file_ids_from_knowledge_obj(kb_obj)
+            if ids:
+                return ids
+        except Exception:
+            continue
+
+    return set()
+
+
+async def _unlink_file_from_kb(knowledge_id: str, file_id: str, user_id: str, db) -> None:
+    """Unlink a file from a KB across Open WebUI API variations."""
+    _ensure_openwebui_imports()
+
+    method_names = (
+        'remove_file_from_knowledge_by_id',
+        'delete_file_from_knowledge_by_id',
+        'remove_file_from_knowledge',
+        'delete_file_from_knowledge',
+    )
+    last_error = None
+
+    for method_name in method_names:
+        method = getattr(Knowledges, method_name, None)
+        if method is None:
+            continue
+        try:
+            await _call_knowledge_api(
+                method,
+                knowledge_id=knowledge_id,
+                id=knowledge_id,
+                file_id=file_id,
+                user_id=user_id,
+                db=db,
+            )
+            return
+        except Exception as exc:
+            last_error = exc
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError('No supported knowledge unlink API found')
+
+
 # ---------------------------------------------------------------------------
 # Vectorization helper
 # ---------------------------------------------------------------------------
@@ -680,6 +789,14 @@ class Tools:
                 'immediately. Progress/errors are written to Open WebUI logs.'
             ),
         )
+        prune_missing_files: bool = Field(
+            default=False,
+            description=(
+                'When true, unlink files from each KB when they are no longer '
+                'present in the source subfolder. This does not delete shared '
+                'file records globally; it only removes KB links.'
+            ),
+        )
 
     def __init__(self):
         self.valves = self.Valves()
@@ -799,6 +916,7 @@ class Tools:
                     processed=0,
                     failed=0,
                     skipped=0,
+                    pruned=0,
                     files=[],
                 )
 
@@ -970,6 +1088,41 @@ class Tools:
                         )
                     )
 
+                if getattr(self.valves, 'prune_missing_files', False) is True:
+                    try:
+                        linked_ids = await _get_kb_file_ids(knowledge_id, db)
+                        desired_ids = {
+                            str(item.file_id)
+                            for item in kb_summary.files
+                            if item.file_id is not None
+                        }
+                        stale_ids = sorted(linked_ids - desired_ids)
+                        if stale_ids:
+                            log.warning(
+                                'local_import prune kb=%s stale_links=%d',
+                                kb_name,
+                                len(stale_ids),
+                            )
+                        for stale_file_id in stale_ids:
+                            try:
+                                await _unlink_file_from_kb(knowledge_id, stale_file_id, user_id, db)
+                                kb_summary.pruned += 1
+                            except Exception as prune_exc:
+                                kb_summary.failed += 1
+                                log.info(
+                                    'local_import prune kb=%s file_id=%s reason=%s',
+                                    kb_name,
+                                    stale_file_id,
+                                    str(prune_exc),
+                                )
+                    except Exception as exc:
+                        kb_summary.failed += 1
+                        log.info(
+                            'local_import prune kb=%s status=failed reason=%s',
+                            kb_name,
+                            str(exc),
+                        )
+
                 kb_summary.duration_seconds = round(time.perf_counter() - kb_start, 3)
                 if kb_summary.duration_seconds > 0:
                     kb_summary.files_per_second = round(
@@ -996,6 +1149,7 @@ class Tools:
             total_processed=sum(kb.processed for kb in kb_summaries),
             total_failed=sum(kb.failed for kb in kb_summaries),
             total_skipped=sum(kb.skipped for kb in kb_summaries),
+            total_pruned=sum(kb.pruned for kb in kb_summaries),
             knowledge_bases=kb_summaries,
             duration_seconds=duration_seconds,
             files_per_second=files_per_second,
@@ -1009,13 +1163,15 @@ class Tools:
 
         log.info(
             'local_import summary drop_folder=%s total_discovered=%d '
-            'total_imported=%d total_linked=%d total_processed=%d total_failed=%d',
+            'total_imported=%d total_linked=%d total_processed=%d total_failed=%d '
+            'total_pruned=%d',
             drop_folder,
             summary.total_discovered,
             summary.total_imported,
             summary.total_linked,
             summary.total_processed,
             summary.total_failed,
+            summary.total_pruned,
         )
 
         return json.dumps(asdict(summary))
