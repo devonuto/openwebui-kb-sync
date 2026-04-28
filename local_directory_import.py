@@ -23,6 +23,7 @@ import mimetypes
 import pathlib
 import shutil
 import sys
+import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
@@ -186,6 +187,8 @@ class KBImportSummary:
     skipped: int = 0
     files: list = field(default_factory=list)
     error: str | None = None
+    duration_seconds: float = 0.0
+    files_per_second: float = 0.0
 
 
 @dataclass
@@ -199,6 +202,8 @@ class ImportSummary:
     total_skipped: int = 0
     knowledge_bases: list = field(default_factory=list)
     error: str | None = None
+    duration_seconds: float = 0.0
+    files_per_second: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -224,6 +229,13 @@ async def _db_execute(db, statement):
     if inspect.isawaitable(result):
         return await result
     return result
+
+
+async def _maybe_await(value):
+    """Await *value* when needed, otherwise return it directly."""
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 async def _find_file_by_hash(file_hash: str, db) -> 'File | None':
@@ -284,21 +296,23 @@ async def _insert_file_record(
     _ensure_openwebui_imports()
     content_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
     size = dest_path.stat().st_size
-    await Files.insert_new_file(
-        user_id,
-        FileForm(
-            id=file_id,
-            hash=file_hash,
-            filename=filename,
-            path=str(dest_path),
-            data={'content': ''},
-            meta={
-                'name': filename,
-                'content_type': content_type,
-                'size': size,
-                'source': relative_path,
-            },
-        ),
+    await _maybe_await(
+        Files.insert_new_file(
+            user_id,
+            FileForm(
+                id=file_id,
+                hash=file_hash,
+                filename=filename,
+                path=str(dest_path),
+                data={'content': ''},
+                meta={
+                    'name': filename,
+                    'content_type': content_type,
+                    'size': size,
+                    'source': relative_path,
+                },
+            ),
+        )
     )
 
 
@@ -439,11 +453,13 @@ async def _call_knowledge_api(func, **candidate_values):
 async def _link_file_to_kb(knowledge_id: str, file_id: str, user_id: str, db) -> None:
     """Link an existing file record to a knowledge base."""
     _ensure_openwebui_imports()
-    await Knowledges.add_file_to_knowledge_by_id(
-        knowledge_id=knowledge_id,
-        file_id=file_id,
-        user_id=user_id,
-        db=db,
+    await _maybe_await(
+        Knowledges.add_file_to_knowledge_by_id(
+            knowledge_id=knowledge_id,
+            file_id=file_id,
+            user_id=user_id,
+            db=db,
+        )
     )
 
 
@@ -466,11 +482,13 @@ async def _vectorize_file(
         if ProcessFileForm is not None
         else SimpleNamespace(file_id=file_id, collection_name=knowledge_id, content=None)
     )
-    await process_file(
-        request,
-        form,
-        user=user,
-        db=db,
+    await _maybe_await(
+        process_file(
+            request,
+            form,
+            user=user,
+            db=db,
+        )
     )
 
 
@@ -553,6 +571,7 @@ class Tools:
 
         :return: JSON string containing an ImportSummary with per-KB breakdowns.
         """
+        overall_start = time.perf_counter()
         drop_folder = self.valves.drop_folder
         if not drop_folder:
             return json.dumps(
@@ -615,6 +634,7 @@ class Tools:
 
         for subfolder in subfolders:
             kb_name = subfolder.name
+            kb_start = time.perf_counter()
 
             # 4. Find or create the knowledge base for this subfolder
             async with _open_db_session() as db:
@@ -638,6 +658,8 @@ class Tools:
                             failed=1,
                             files=[],
                             error=str(exc),
+                            duration_seconds=round(time.perf_counter() - kb_start, 3),
+                            files_per_second=0.0,
                         )
                     )
                     continue
@@ -795,18 +817,35 @@ class Tools:
                         )
                     )
 
+                kb_summary.duration_seconds = round(time.perf_counter() - kb_start, 3)
+                if kb_summary.duration_seconds > 0:
+                    kb_summary.files_per_second = round(
+                        kb_summary.discovered / kb_summary.duration_seconds,
+                        3,
+                    )
+
             kb_summaries.append(kb_summary)
 
         # 6. Aggregate totals
+        total_discovered = sum(kb.discovered for kb in kb_summaries)
+        duration_seconds = round(time.perf_counter() - overall_start, 3)
+        files_per_second = (
+            round(total_discovered / duration_seconds, 3)
+            if duration_seconds > 0
+            else 0.0
+        )
+
         summary = ImportSummary(
             drop_folder=drop_folder,
-            total_discovered=sum(kb.discovered for kb in kb_summaries),
+            total_discovered=total_discovered,
             total_imported=sum(kb.imported for kb in kb_summaries),
             total_linked=sum(kb.linked for kb in kb_summaries),
             total_processed=sum(kb.processed for kb in kb_summaries),
             total_failed=sum(kb.failed for kb in kb_summaries),
             total_skipped=sum(kb.skipped for kb in kb_summaries),
             knowledge_bases=kb_summaries,
+            duration_seconds=duration_seconds,
+            files_per_second=files_per_second,
             error=(
                 'One or more knowledge bases failed to import; '
                 'see knowledge_bases[*].error'

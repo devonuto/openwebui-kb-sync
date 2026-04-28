@@ -12,7 +12,7 @@ Point the tool at a drop folder on the server's local filesystem. Each **immedia
 4. Linked to the corresponding Knowledge Base
 5. Vectorized via the retrieval pipeline
 
-The tool returns a JSON summary with per-KB breakdowns (discovered / imported / linked / processed / skipped / failed counts, plus per-file status).
+The tool returns a JSON summary with per-KB breakdowns (discovered / imported / linked / processed / skipped / failed counts, per-file status, and timing metrics such as `duration_seconds` and `files_per_second`).
 
 ### Example folder layout
 
@@ -79,6 +79,8 @@ No parameters — the drop folder path is set by the admin in the `drop_folder` 
   "total_processed": 2,
   "total_skipped": 1,
   "total_failed": 0,
+  "duration_seconds": 3.412,
+  "files_per_second": 0.879,
   "knowledge_bases": [
     {
       "kb_name": "project-alpha",
@@ -90,6 +92,8 @@ No parameters — the drop folder path is set by the admin in the `drop_folder` 
       "processed": 1,
       "skipped": 1,
       "failed": 0,
+      "duration_seconds": 1.922,
+      "files_per_second": 1.04,
       "files": [...]
     }
   ]

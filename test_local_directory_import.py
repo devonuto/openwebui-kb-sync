@@ -3,6 +3,7 @@
 import json
 import pathlib
 import stat
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -279,13 +280,17 @@ async def test_import_local_directory_happy_path(tmp_path):
     data = json.loads(result_str)
     assert 'error' not in data or data['error'] is None
     assert data['total_discovered'] == 3  # 2 + 1 supported files
-    assert len(data['knowledge_bases']) == 2
+    assert  len(data['knowledge_bases']) == 2
+    assert data['duration_seconds'] >= 0
+    assert data['files_per_second'] >= 0
 
     # kb_created flags
     kb_map = {kb['kb_name']: kb for kb in data['knowledge_bases']}
     assert kb_map['azure-functions']['kb_created'] is False
     assert kb_map['power-platform']['kb_created'] is True
     assert kb_map['azure-functions']['files'][0]['relative_path'] == 'main.yml'
+    assert kb_map['azure-functions']['duration_seconds'] >= 0
+    assert kb_map['azure-functions']['files_per_second'] >= 0
 
     # relative_path is relative to subfolder root
     pp_files = kb_map['power-platform']['files']
@@ -448,6 +453,33 @@ class TestVectorization:
         # File record was created (_insert_file_record was called)
         mock_insert_record.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_sync_insert_new_file_return_is_supported(self, tmp_path):
+        """Sync Files.insert_new_file return values should not break insert."""
+        dest_path = tmp_path / 'file.md'
+        dest_path.write_text('content')
+
+        files_stub = SimpleNamespace(insert_new_file=MagicMock(return_value=MagicMock()))
+
+        with (
+            patch.object(_plugin_module, 'Files', new=files_stub),
+            patch.object(
+                _plugin_module,
+                'FileForm',
+                new=lambda **kwargs: SimpleNamespace(**kwargs),
+            ),
+        ):
+            await _plugin_module._insert_file_record(
+                user_id='u1',
+                file_id='f1',
+                filename='file.md',
+                dest_path=dest_path,
+                relative_path='file.md',
+                file_hash='abc123',
+            )
+
+        files_stub.insert_new_file.assert_called_once()
+
 
 @pytest.mark.asyncio
 async def test_import_local_directory_supports_generator_db_dependency(tmp_path):
@@ -520,6 +552,8 @@ async def test_import_local_directory_surfaces_kb_creation_errors(tmp_path):
     assert data['error'] == 'One or more knowledge bases failed to import; see knowledge_bases[*].error'
     assert data['total_failed'] == 1
     assert data['knowledge_bases'][0]['error'] == 'knowledge create failed: boom'
+    assert data['duration_seconds'] >= 0
+    assert data['files_per_second'] >= 0
 
     @pytest.mark.asyncio
     async def test_mixed_vectorization_results_accurate_counts(self, tmp_path):
